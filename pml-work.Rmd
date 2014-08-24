@@ -1,0 +1,144 @@
+---
+title: "Course Work"
+author: "Yuzhe ZHU"
+date: "Sunday, August 24, 2014"
+output: html_document
+---
+
+This is the R markdown document for course work of Practical Machine Learning from YuZhe ZHU. The purpose of this exercise is to train an algorithm to predict the manner in which people do their exercise with data from <http://groupware.les.inf.puc-rio.br/har>. For details about the data collection please refer to <http://groupware.les.inf.puc-rio.br/har>.
+
+Preliminary analyses and cleaning of data
+---
+
+The first thing is to load the data into R
+
+```{r}
+orig_data <- read.csv("pml-training.csv")
+pred_data <- read.csv("pml-testing.csv")
+```
+
+The first R data frame holds all the data that we can use in training, and the second R data frame holds the data that we want to predict.
+
+Having a quick look at the data and the first thing one might notice is that lots of variables are either with lots of empty cells, or with lots of NA. Clearly such variable cannot be used in prediction. So the first step is to exclude such variables from training. I simply removed the columns with over 90% of NA values or empty values from the data frame. And it turns out this excludes all the variables with either NA or empty values.
+
+```{r}
+# remove columns with lots of NA
+clean_data <- orig_data[, colSums(is.na(orig_data)) < 0.1 * nrow(orig_data)]
+# remove columns with lots of empty cells
+clean_data <- clean_data[, colSums(clean_data == "") < 0.1 * nrow(clean_data)]
+```
+
+Some of variables are clearly not reasonable predictors. I find user name and variables related to timestamps clearly not good choices for prediction, so I also remove them.
+```{r}
+# remove X, user_name, and timestamps
+clean_data <- clean_data[, -c(1, 2, 3, 4, 5)]
+```
+
+Now, do we want new window as predictor? It is not clear so worth exploring. We can make a bar plot and see if new window would have different distributions in different classe categories. It turns out, as we can see in the plot, that new window basically has the same distribution accross different classe categories. So new window is also left out in the training.
+
+```{r}
+temp_table <- table(clean_data$new_window, clean_data$classe)
+barplot(temp_table)
+```
+
+As far as I can see there is no obvious reason to exclude other variables. So I will use all of them in further analysis.
+
+Split training data, and further exploring of variables
+---
+I split the training data into 60% for training, 20% for cross validation and 20% for independent testing of the accuracy of the model. The split is based on classe, which is the variable we want to predict, to make sure each of the set would contain a reasonable number of samples for each of the classes.
+
+```{r}
+library(caret)
+in_train <- createDataPartition(y = clean_data$classe, p = 0.8, list = FALSE)
+training <- clean_data[in_train, ]
+testing <- clean_data[-in_train, ]
+in_tr <- createDataPartition(y = training$classe, p = 0.75, list = FALSE)
+training_tr <- training[in_tr, ]
+training_cv <- training[-in_tr, ]
+```
+
+Then I further explore the data with training set. The first thing to see is if any of the single variable can split the classe well. It turns out the lots of the variables can do this.
+
+For example, we can see roll belt can split the classe fairly well. The points in the following plots are roll belt observations colored by classe
+```{r}
+qplot(seq_along(roll_belt), roll_belt, colour = classe, data = training_tr)
+```
+
+And so is roll arm
+```{r}
+qplot(seq_along(roll_arm), roll_arm, colour = classe, data = training_tr)
+```
+
+It would be interesting to see if combining roll belt and roll arm together would make a nicer predictor. We can see it can still split the data to some extend, but seems not as clear as the single variable.
+```{r}
+qplot(roll_belt, roll_arm, colour = classe, data = training_tr)
+```
+
+Training and model selection
+---
+
+From the data exploring it seems that tree methods could be good choice. In principle, we can easily find one variable that best splits the data, and then find the best variable to split the sub-groups, and so on. My first choice would be simple CART model. It has the benefit of easy interpretation and is also fast. Unfortunately, the model itself doesn't show good fit on training set, and also behaves poorly on cross validation set. So I move to random forest. We can see that the random forest produces good fit to training set, and also has promising result on cross validation set. For details please see below.
+
+CART model
+---
+---
+
+```{r}
+# training with cart
+model_fit_cart <- train(classe ~ ., method = "rpart", data = training_tr)
+# test on cross validation set
+cv_pred_cart <- predict(model_fit_cart, training_cv)
+table(cv_pred_cart, training_cv$classe)
+confusionMatrix(cv_pred_cart, training_cv$classe)
+```
+
+Random forest
+---
+---
+
+Training with random forest:
+```{r echo=FALSE}
+# random forest training is very expensive. It took hours on my computer. I directly load the model trained so that this doesn't need to run again and again when I work on the markdown file
+load("pml_work.RData")
+```
+
+```{r eval=FALSE}
+model_fit_rf <- train(classe ~ . , data = training_tr, method = 'rf', prox = TRUE)
+```
+
+Looking at brief information about the model, we have roughly accuracy of 99%, which is very promising.
+```{r}
+model_fit_rf
+```
+
+Now looking at how the model behaves on cross validation set
+```{r}
+cv_pred_rf <- predict(model_fit_rf, training_cv)
+table(cv_pred_rf, training_cv$classe)
+confusionMatrix(cv_pred_rf, training_cv$classe)
+```
+
+We can see that the model does quite well on cross validation set. From the table summarizing the predicted classe and classe from the data we can see that majority of the results lie on the diagonal, which means most of the predictions are correct. Looking at the confusion matrix we can see key error estimates such as sensitivity, specificity, balanced accuracy, etc. We can see they are all around 99% and are very promising.
+
+Testing the model on test set
+---
+Now we want to finally test the model on the test set to see how it works. Remembering from previous discussion that this test set is split from the original training data. Again, we can see the results are very promising on this independent testing set.
+
+```{r}
+testing_pred_rf <- predict(model_fit_rf, testing)
+table(testing_pred_rf, testing$classe)
+confusionMatrix(testing_pred_rf, testing$classe)
+```
+
+Prediction
+---
+Now we apply our random forest model to the 20 samples we want to preidict.
+
+```{r}
+pred_res <- predict(model_fit_rf, pred_data)
+pred_res
+```
+
+Conclusion
+---
+The original training data is split to 60% of training set, 20% of cross validation set and 20% of testing set based on classe variable after some preliminary cleaning. Data exploring suggests that tree based model could be good choice, and standard CART and random forest are trained with training set and tested with cross validation set. Random forest is the clear winner, and furthur testing on the model on testing set gives promising results. Then the random forest model is used to predict the classe with the observations we are interested in. 
